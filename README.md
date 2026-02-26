@@ -10,11 +10,7 @@ A Stavrobot plugin for tracking packages via the [17track.net](https://www.17tra
 
 ## Installation
 
-Install the plugin from this repository URL:
-
-```
-https://github.com/stavrobot/plugin-17track
-```
+Install the plugin by asking the bot to install https://github.com/stavrobot/plugin-17track.git.
 
 ## Configuration
 
