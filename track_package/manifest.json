@@ -1,0 +1,11 @@
+{
+  "name": "track_package",
+  "description": "Register a tracking number and return its current tracking status.",
+  "entrypoint": "run.py",
+  "parameters": {
+    "tracking_number": {
+      "type": "string",
+      "description": "The tracking number to look up."
+    }
+  }
+}

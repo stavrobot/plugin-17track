@@ -1,0 +1,6 @@
+{
+  "name": "list_packages",
+  "description": "List all tracked packages and their current statuses.",
+  "entrypoint": "run.py",
+  "parameters": {}
+}

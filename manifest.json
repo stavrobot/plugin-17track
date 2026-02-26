@@ -1,0 +1,10 @@
+{
+  "name": "17track",
+  "description": "Package tracking via the 17track.net REST API.",
+  "config": {
+    "api_token": {
+      "required": true,
+      "description": "17track API access key. Obtain one at https://features.17track.net/en/api under Settings -> Security -> Access Key."
+    }
+  }
+}
