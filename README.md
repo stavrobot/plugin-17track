@@ -19,3 +19,11 @@ This plugin requires a 17track API token. To obtain one:
 1. Register at https://features.17track.net/en/api (each account gets 100 free tracking quota).
 2. Log in and go to Settings -> Security -> Access Key.
 3. Set the `api_token` configuration value to your access key.
+
+## Regenerating the carrier table
+
+`carriers.json` (carrier code -> name) is vendored. Regenerate it by hand with:
+
+```sh
+curl -s https://res.17track.net/asset/carrier/info/apicarrier.all.json | python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps({str(e['key']):e['_name'] for e in d},ensure_ascii=False,separators=(',',':')))" > carriers.json
+```

@@ -1,10 +1,19 @@
 {
   "name": "17track",
-  "description": "Package tracking via the 17track.net REST API.",
+  "description": "Package tracking via 17track.net.",
   "config": {
     "api_token": {
-      "required": true,
-      "description": "17track API access key. Obtain one at https://features.17track.net/en/api under Settings -> Security -> Access Key."
+      "required": false,
+      "description": "17track REST API access key (official API mode). Set EITHER this OR email+password, never both. The REST API is a paid product (free trial available): register at https://features.17track.net/en/api, then copy your key from the API account at https://api.17track.net under Settings -> Security -> Access Key."
+    },
+    "email": {
+      "required": false,
+      "description": "Email address of your 17track.net account (unofficial mode). Set EITHER email+password OR api_token, never both."
+    },
+    "password": {
+      "required": false,
+      "description": "Password of your 17track.net account. Only used together with email; leave unset when using api_token."
     }
-  }
+  },
+  "instructions": "Choose ONE authentication mode and set only those values:\n\n1. Official REST API (recommended if you have an API account): set api_token to your access key. This API is now a paid product, but a free trial is available. Register at https://features.17track.net/en/api, then get your key from the API account at https://api.17track.net (Settings -> Security -> Access Key).\n\n2. Unofficial account login (no API account needed): set email and password to your regular 17track.net login. This mode uses the unofficial API that the 17track website itself uses, not a documented public API, so it can break without notice.\n\nDo not set both modes. All values are free-form placeholders; store them as plain strings, e.g. api_token: \"YOUR_ACCESS_KEY\", email: \"you@example.com\", password: \"your-password\"."
 }
