@@ -11,6 +11,7 @@ with a fake: no network calls are made and no credentials are read.
 
 Run with: uv run tests/test_api_path.py
 """
+import asyncio
 import importlib.util
 import io
 import json
@@ -610,6 +611,123 @@ try:
     check("8g: missing table fails", False)
 except ToolError as err:
     check("8g: missing table fails", "missing or unreadable" in str(err), detail=str(err))
+
+# ---------------------------------------------------------------------------
+# 9. Pending packages: a not-yet-fetched package must never report a null
+#    status, because that reads as "this package has no events".
+#    The live pending window could not be reproduced (it lasts minutes and
+#    needs a freshly added number), so these are the only checks it has.
+# ---------------------------------------------------------------------------
+UPS = 100002  # "UPS" in the vendored table.
+
+
+def account_package(state, last_event, carrier=UPS, remark=None):
+    """A raw GetTrackInfoList package dict, as account mode receives it."""
+    package = {"FTrackNo": "ABC", "FFirstCarrier": carrier}
+    if state is not None:
+        package["FPackageState"] = state
+    if last_event is not None:
+        package["FLastEvent"] = json.dumps(last_event)
+    if remark is not None:
+        package["FRemark"] = remark
+    return package
+
+
+# Account mode: carrier assigned, nothing fetched yet.
+pending = _17track.apply_pending_state(
+    _17track.format_account_package(account_package(None, None), CARRIERS)
+)
+check("9a: absent state and no event yields pending status", pending["status"] == _17track.PENDING_STATUS, detail=repr(pending))
+check("9b: pending keeps the detected carrier", pending["carrier"] == "UPS", detail=repr(pending))
+check(
+    "9c: pending omits the unknown fields rather than nulling them",
+    not {"location", "latest_event", "timestamp", "origin_country", "destination_country"} & set(pending),
+    detail=repr(sorted(pending)),
+)
+check("9d: pending explains itself", "few minutes" in pending["note"], detail=repr(pending.get("note")))
+
+# "Not Found" is a real answer from 17track, not a pending state.
+not_found = _17track.apply_pending_state(
+    _17track.format_account_package(account_package(0, None), CARRIERS)
+)
+check("9e: FPackageState 0 stays Not Found", not_found["status"] == "Not Found", detail=repr(not_found))
+check("9f: Not Found is not rewritten as pending", "note" not in not_found, detail=repr(not_found))
+
+# A fully fetched package must pass through untouched.
+fetched_raw = _17track.format_account_package(
+    account_package(10, {"a": "2026-01-01 00:00", "c": "NYC", "z": "In transit"}),
+    CARRIERS,
+)
+fetched = _17track.apply_pending_state(dict(fetched_raw))
+check("9g: fetched package is untouched", fetched == fetched_raw, detail=repr(fetched))
+
+# A friendly name survives the rewrite; it is user data, not carrier data.
+named = _17track.apply_pending_state(
+    _17track.format_account_package(account_package(None, None, remark="Huel"), CARRIERS)
+)
+check("9h: pending preserves friendly_name", named.get("friendly_name") == "Huel", detail=repr(named))
+
+# API mode: an accepted entry whose track is empty is the same pending state.
+out, calls = run_main(
+    {"tracking_number": "ABC"},
+    [
+        register_accepted("ABC", UPS),
+        {"code": 0, "data": {"accepted": [{"number": "ABC", "track": {}}], "rejected": []}},
+    ],
+)
+parsed = json.loads(out)
+check("9i: API mode empty track yields pending", parsed["status"] == _17track.PENDING_STATUS, detail=out)
+check("9j: API mode pending omits null event fields", "latest_event" not in parsed, detail=out)
+
+# The carrier-override response is deliberately all-null with its own note.
+# apply_pending_state must not be reached on that path and rewrite it.
+out, calls = run_main(
+    {"tracking_number": "ABC", "carrier": "Yanwen"},
+    [register_rejected("ABC", -18019901), change_accepted("ABC", YANWEN)],
+)
+parsed = json.loads(out)
+check("9k: carrier override keeps its own note", parsed["status"] is None and "was set to" in parsed["note"], detail=out)
+
+# ---------------------------------------------------------------------------
+# 10. AddTrackNo duplicate detection by code, not just by message.
+# ---------------------------------------------------------------------------
+check(
+    "10a: duplicate add code is defined",
+    _17track.DUPLICATE_ADD_CODE == -11010101,
+    detail=repr(_17track.DUPLICATE_ADD_CODE),
+)
+
+
+def add_track_no_result(response):
+    """Run account_add_tracking_number against a canned buyer response."""
+    orig = _17track.account_buyer_call
+
+    async def fake(session, method, param):
+        return response
+
+    _17track.account_buyer_call = fake
+    try:
+        asyncio.run(_17track.account_add_tracking_number(None, "ABC"))
+        return None
+    except ToolError as err:
+        return err
+    finally:
+        _17track.account_buyer_call = orig
+
+
+check("10b: code 0 accepted", add_track_no_result({"Code": 0}) is None)
+check(
+    "10c: -11010101 accepted with a non-English message",
+    add_track_no_result({"Code": -11010101, "Message": "Numero gia yparxei"}) is None,
+)
+check(
+    "10d: 'exists' message still accepted as a fallback",
+    add_track_no_result({"Code": -1, "Message": "Tracking number exists."}) is None,
+)
+check(
+    "10e: an unrelated failure still fails loudly",
+    isinstance(add_track_no_result({"Code": -999, "Message": "Quota exceeded."}), ToolError),
+)
 
 # ---------------------------------------------------------------------------
 _17track.load_config = orig_load_config

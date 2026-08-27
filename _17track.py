@@ -31,6 +31,11 @@ ROOT = pathlib.Path(__file__).resolve().parent
 
 BUYER_API_URL = "https://buyer.17track.net/orderapi/call"
 
+# AddTrackNo's response code for a number already on the account. Observed
+# live; 17track does not document it. Treated as success because the tool is
+# idempotent.
+DUPLICATE_ADD_CODE = -11010101
+
 # 17track status codes are numeric and identical across the REST and buyer
 # API surfaces. Codes not in this map are returned as-is so that new
 # statuses don't silently disappear.
@@ -43,6 +48,11 @@ STATUS_CODES: dict[int, str] = {
     40: "Delivered",
     50: "Alert",
 }
+
+# Reported instead of a null status while 17track is still fetching. Not a
+# 17track code: the API expresses this state by omitting the status
+# entirely. See apply_pending_state.
+PENDING_STATUS = "Pending"
 
 # Both modes must fit the runner's hard ~30s kill. Account mode: login +
 # AddTrackNo + GetTrackInfoList (+ one retry) + optional SetTrackCarrier,
@@ -251,6 +261,51 @@ def format_account_package(package: dict, carriers: dict | None) -> dict:
     return result
 
 
+def apply_pending_state(result: dict) -> dict:
+    """Turn a not-yet-fetched package result into an explicit pending one.
+
+    17track assigns a package's carrier the moment it is added, inferring
+    it from the tracking number's prefix, but takes minutes to fetch
+    anything from that carrier: six minutes was measured on a real UPS
+    package (FCreateTime 09:10:44, FCompleteUpdate 09:16:36). Inside that
+    window the package carries a carrier and nothing else, and formatting
+    it verbatim yields a result whose status, location, latest_event and
+    timestamp are all null. An assistant reads that as "this package has
+    no tracking information" and tells the user there are no events, which
+    is false - 17track simply has not looked yet.
+
+    The delay is far longer than the tool's 30-second budget, so waiting it
+    out is not an option and "not ready" is the only honest answer. status
+    is therefore never left null, because it is the field the assistant
+    acts on, and the still-unknown fields are dropped rather than nulled so
+    that nothing invites the same wrong conclusion a second time. The
+    carrier is kept: it is genuinely known.
+
+    A status of 0 ("Not Found") is NOT pending. That is 17track saying it
+    did fetch and the carrier has nothing, which is a real answer. Only a
+    missing status counts, so this checks for None rather than falsiness.
+    """
+    if result.get("status") is not None or result.get("latest_event"):
+        return result
+
+    pending = {
+        "tracking_number": result.get("tracking_number"),
+        "status": PENDING_STATUS,
+        "carrier": result.get("carrier"),
+        "note": (
+            "17track has accepted this tracking number and detected the "
+            "carrier, but has not fetched any tracking data from the carrier "
+            "yet. This usually takes a few minutes. No events exist on "
+            "17track's side yet; this does not mean the package has none. "
+            "Try again shortly."
+        ),
+    }
+    friendly_name = result.get("friendly_name")
+    if friendly_name:
+        pending["friendly_name"] = friendly_name
+    return pending
+
+
 def apply_carrier_override(
     result: dict, tracking_number, carrier_code, carriers: dict | None
 ) -> dict:
@@ -409,6 +464,10 @@ async def account_add_tracking_number(
         return
     # Re-adding a number already on the account is not an error: the tool is
     # idempotent, matching REST-mode behaviour for already-registered numbers.
+    # The code is checked first because it is locale-independent; the message
+    # check is kept as a fallback in case 17track ever changes the code.
+    if code == DUPLICATE_ADD_CODE:
+        return
     message = str(data.get("Message") or "")
     if "exists" in message.lower():
         return

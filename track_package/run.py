@@ -284,7 +284,11 @@ async def track_account_mode(
                 carriers,
             )
 
-        return _17track.format_account_package(package, carriers)
+        # A package added moments ago has a carrier but no state or events
+        # yet, which must not be reported as a package without events.
+        return _17track.apply_pending_state(
+            _17track.format_account_package(package, carriers)
+        )
 
 
 def main() -> None:
@@ -339,7 +343,11 @@ def main() -> None:
             )
         else:
             raw_info = get_tracking_info(tracking_number, api_token, deadline)
-            result = _17track.format_api_result(raw_info, carriers)
+            # Same pending window as account mode: /register succeeds long
+            # before 17track has fetched anything from the carrier.
+            result = _17track.apply_pending_state(
+                _17track.format_api_result(raw_info, carriers)
+            )
     else:
         email = str(config["email"]).strip()
         # A password may legitimately begin or end with whitespace, so it is
