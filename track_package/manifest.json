@@ -6,6 +6,10 @@
     "tracking_number": {
       "type": "string",
       "description": "The tracking number to look up."
+    },
+    "carrier": {
+      "type": "string",
+      "description": "Optional. The carrier name (for example \"Yanwen\") to use for this package. Supply it only when 17track detected the wrong carrier; the tool then overrides the carrier. After an override, 17track re-parses the package for up to an hour, so the result contains the newly set carrier name and a note instead of fresh tracking details; do not call the tool again for this number until then."
     }
   }
 }

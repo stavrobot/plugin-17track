@@ -1,6 +1,6 @@
 {
   "name": "list_packages",
-  "description": "List all tracked packages and their current statuses.",
+  "description": "List all tracked packages and their current statuses. This tool requires api_token authentication and is unavailable when the plugin is configured with email and password.",
   "entrypoint": "run.py",
   "parameters": {}
 }

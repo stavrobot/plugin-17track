@@ -1,41 +1,31 @@
 #!/usr/bin/env -S uv run
 # /// script
-# dependencies = ["requests"]
+# dependencies = ["requests", "aiohttp", "pyseventeentrack"]
 # ///
 
 import json
-import sys
 import pathlib
+import sys
 
 import requests
 
+# The shared root module holds config/auth resolution, the status map and
+# carrier lookup. It lives at the plugin root so that every tool resolves
+# configuration and auth mode the same way.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+import _17track
+from _17track import ToolError
+
 BASE_URL = "https://api.17track.net/track/v1"
 
-# Mapping from the 17track API's numeric status codes (field `track.e`) to
-# human-readable strings. Codes not in this map are returned as-is so that
-# new statuses from the API don't silently disappear.
-STATUS_CODES: dict[int, str] = {
-    0: "Not Found",
-    10: "In Transit",
-    20: "Expired",
-    30: "Pick Up",
-    35: "Undelivered",
-    40: "Delivered",
-    50: "Alert",
-}
 
-
-def read_config() -> dict:
-    config_path = pathlib.Path(__file__).parent / ".." / "config.json"
-    with config_path.open() as config_file:
-        return json.load(config_file)
-
-
-def get_tracked_numbers(api_token: str) -> list[str]:
+def get_tracked_numbers(api_token: str, timeout: float) -> list[str]:
     response = requests.post(
         f"{BASE_URL}/gettracklist",
         headers={"17token": api_token},
         json={},
+        timeout=timeout,
     )
     response.raise_for_status()
     body = response.json()
@@ -44,7 +34,9 @@ def get_tracked_numbers(api_token: str) -> list[str]:
     return [item["number"] for item in accepted]
 
 
-def get_tracking_info_batch(numbers: list[str], api_token: str) -> list[dict]:
+def get_tracking_info_batch(
+    numbers: list[str], api_token: str, deadline: float
+) -> list[dict]:
     # The API accepts at most 40 numbers per request.
     batch_size = 40
     results = []
@@ -54,6 +46,7 @@ def get_tracking_info_batch(numbers: list[str], api_token: str) -> list[dict]:
             f"{BASE_URL}/gettrackinfo",
             headers={"17token": api_token},
             json=[{"number": number} for number in batch],
+            timeout=_17track.api_timeout_remaining(deadline),
         )
         response.raise_for_status()
         body = response.json()
@@ -62,44 +55,41 @@ def get_tracking_info_batch(numbers: list[str], api_token: str) -> list[dict]:
     return results
 
 
-def format_tracking_result(raw: dict) -> dict:
-    track = raw.get("track") or {}
-    latest_event = track.get("z0") or {}
-
-    raw_status = track.get("e")
-    status = STATUS_CODES.get(raw_status, raw_status)
-
-    return {
-        "tracking_number": raw.get("number"),
-        "status": status,
-        "carrier": track.get("w1"),
-        "origin_country": track.get("b"),
-        "destination_country": track.get("c"),
-        "location": latest_event.get("c") or latest_event.get("d"),
-        "latest_event": latest_event.get("z"),
-        "timestamp": latest_event.get("a"),
-    }
-
-
 def main() -> None:
     params = json.load(sys.stdin)
 
     if params:
-        print(
-            f"Unknown parameters: {', '.join(sorted(params.keys()))}",
-            file=sys.stderr,
+        raise ToolError(f"Unknown parameters: {', '.join(sorted(params.keys()))}")
+
+    config = _17track.load_config()
+    mode = _17track.resolve_auth_mode(config)
+    if mode != "api":
+        # A no-op would be worse than a refusal: an empty list would make
+        # the assistant confidently report that nothing is tracked.
+        raise ToolError(
+            "list_packages requires api_token authentication and is not "
+            "available when the plugin is configured with email and password "
+            "(account mode)."
         )
-        sys.exit(1)
 
-    config = read_config()
-    api_token = config["api_token"]
+    carriers = _17track.load_carriers()
+    api_token = str(config["api_token"]).strip()
 
-    numbers = get_tracked_numbers(api_token)
-    raw_results = get_tracking_info_batch(numbers, api_token)
-    packages = [format_tracking_result(raw) for raw in raw_results]
+    # Bound the whole API path: gettracklist plus one gettrackinfo per
+    # batch of 40 numbers, each request timed out from the remaining budget.
+    deadline = _17track.api_deadline()
+    numbers = get_tracked_numbers(
+        api_token, _17track.api_timeout_remaining(deadline)
+    )
+    raw_results = get_tracking_info_batch(numbers, api_token, deadline)
+    packages = [_17track.format_api_result(raw, carriers) for raw in raw_results]
 
     json.dump({"packages": packages}, sys.stdout)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ToolError as err:
+        print(str(err), file=sys.stderr)
+        sys.exit(1)
