@@ -1,6 +1,7 @@
 {
   "name": "17track",
   "description": "Package tracking via 17track.net.",
+  "summary": "Track packages via 17track",
   "config": {
     "api_token": {
       "required": false,
